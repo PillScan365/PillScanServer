@@ -52,12 +52,14 @@ class PillAnalysisService:
         prepared = await prepare_upload(upload, self._settings)
         async with self._gate.acquire() as gate_wait:
             vision_started_at = perf_counter()
-            analysis = await self._analyzer.analyze(
+            vision_result = await self._analyzer.analyze(
                 prepared.image,
                 market=market,
                 context=context,
             )
             vision_analysis_ms = _elapsed_ms(vision_started_at)
+
+        analysis = vision_result.analysis
 
         catalog_started_at = perf_counter()
         resolution = (
@@ -82,12 +84,13 @@ class PillAnalysisService:
             pipeline_total_ms=_elapsed_ms(pipeline_started_at),
         )
         return PillAnalysisResponse(
-            schema_version="1.1",
+            schema_version="1.2",
             analysis_id=uuid4(),
             request_id=request_id,
             provider=self._analyzer.provider_name,
             model=self._analyzer.model_name,
             timings=timings,
+            usage=vision_result.usage,
             analysis=analysis,
             resolution=resolution,
             disclaimer=IDENTIFICATION_DISCLAIMER,

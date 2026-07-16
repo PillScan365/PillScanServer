@@ -4,8 +4,8 @@ from typing import Any
 from openai import AsyncOpenAI, OpenAIError
 
 from pillscan_server.errors import VisionProviderError
-from pillscan_server.models import PillVisualAnalysis
-from pillscan_server.protocols import PreparedImage
+from pillscan_server.models import ModelUsage, PillVisualAnalysis
+from pillscan_server.protocols import PreparedImage, VisionAnalysisResult
 
 SYSTEM_PROMPT = """You are a cautious visual evidence extractor for medication recognition.
 Inspect the single supplied image and produce structured evidence that can later be verified
@@ -64,7 +64,7 @@ class OpenAIPillVisionAnalyzer:
         *,
         market: str,
         context: str | None,
-    ) -> PillVisualAnalysis:
+    ) -> VisionAnalysisResult:
         content: list[dict[str, Any]] = [
             {
                 "type": "input_text",
@@ -102,7 +102,10 @@ class OpenAIPillVisionAnalyzer:
         parsed = response.output_parsed
         if not isinstance(parsed, PillVisualAnalysis):
             raise VisionProviderError
-        return parsed
+        return VisionAnalysisResult(
+            analysis=parsed,
+            usage=_model_usage(response),
+        )
 
 
 def _request_text(*, market: str, context: str | None) -> str:
@@ -111,4 +114,20 @@ def _request_text(*, market: str, context: str | None) -> str:
         "Classify the image as a loose pill, medication package, or unknown, then extract only "
         "visible evidence for catalog lookup. "
         f"Expected market: {market}. Additional user context: {context_text}"
+    )
+
+
+def _model_usage(response: Any) -> ModelUsage:
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return ModelUsage.empty()
+
+    input_details = getattr(usage, "input_tokens_details", None)
+    output_details = getattr(usage, "output_tokens_details", None)
+    return ModelUsage(
+        input_tokens=int(getattr(usage, "input_tokens", 0)),
+        cached_input_tokens=int(getattr(input_details, "cached_tokens", 0)),
+        output_tokens=int(getattr(usage, "output_tokens", 0)),
+        reasoning_tokens=int(getattr(output_details, "reasoning_tokens", 0)),
+        total_tokens=int(getattr(usage, "total_tokens", 0)),
     )

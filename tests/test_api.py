@@ -11,8 +11,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pillscan_server import app as app_module
 from pillscan_server.app import create_app
 from pillscan_server.config import Settings
-from pillscan_server.models import PillVisualAnalysis, SubjectType
-from pillscan_server.protocols import PreparedImage
+from pillscan_server.models import ModelUsage, SubjectType
+from pillscan_server.protocols import PreparedImage, VisionAnalysisResult
 from tests.conftest import FakeAnalyzer
 from tests.test_catalog import analysis, make_catalog
 
@@ -24,13 +24,22 @@ class PackageAnalyzer(FakeAnalyzer):
         *,
         market: str,
         context: str | None,
-    ) -> PillVisualAnalysis:
+    ) -> VisionAnalysisResult:
         self.received_image = image
-        return analysis(
-            subject_type=SubjectType.PACKAGE,
-            product_name="百樂行膜衣錠20毫克",
-            strength="20mg",
-            manufacturer="瑞士藥廠股份有限公司新市廠",
+        return VisionAnalysisResult(
+            analysis=analysis(
+                subject_type=SubjectType.PACKAGE,
+                product_name="百樂行膜衣錠20毫克",
+                strength="20mg",
+                manufacturer="瑞士藥廠股份有限公司新市廠",
+            ),
+            usage=ModelUsage(
+                input_tokens=1200,
+                cached_input_tokens=100,
+                output_tokens=300,
+                reasoning_tokens=0,
+                total_tokens=1500,
+            ),
         )
 
 
@@ -75,7 +84,7 @@ async def test_analyze_normalizes_single_image(
     payload = response.json()
     assert payload["request_id"] == "test-request-1"
     assert payload["provider"] == "fake"
-    assert payload["schema_version"] == "1.1"
+    assert payload["schema_version"] == "1.2"
     assert set(payload["timings"]) == {
         "upload_read_ms",
         "image_normalization_ms",
@@ -86,6 +95,7 @@ async def test_analyze_normalizes_single_image(
         "pipeline_total_ms",
     }
     assert all(value >= 0 for value in payload["timings"].values())
+    assert payload["usage"]["total_tokens"] == 0
     assert "vision;dur=" in response.headers["server-timing"]
     assert "catalog;dur=" in response.headers["server-timing"]
     assert payload["analysis"]["subject_type"] == "pill"
@@ -132,6 +142,7 @@ def test_openapi_marks_the_response_contract_as_fixed(
         "ProductIdentifiers",
         "CatalogCandidate",
         "PipelineTimings",
+        "ModelUsage",
     ):
         schema = schemas[schema_name]
         assert set(schema["required"]) == set(schema["properties"])

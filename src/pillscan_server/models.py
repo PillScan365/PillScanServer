@@ -186,13 +186,34 @@ class PipelineTimings(StrictModel):
     pipeline_total_ms: float = Field(ge=0)
 
 
+class ModelUsage(StrictModel):
+    """Billable token usage reported by the vision provider."""
+
+    input_tokens: int = Field(ge=0)
+    cached_input_tokens: int = Field(ge=0)
+    output_tokens: int = Field(ge=0)
+    reasoning_tokens: int = Field(ge=0)
+    total_tokens: int = Field(ge=0)
+
+    @classmethod
+    def empty(cls) -> "ModelUsage":
+        return cls(
+            input_tokens=0,
+            cached_input_tokens=0,
+            output_tokens=0,
+            reasoning_tokens=0,
+            total_tokens=0,
+        )
+
+
 class PillAnalysisResponse(StrictModel):
-    schema_version: Literal["1.1"]
+    schema_version: Literal["1.2"]
     analysis_id: UUID
     request_id: str
     provider: str
     model: str
     timings: PipelineTimings
+    usage: ModelUsage
     analysis: PillVisualAnalysis
     resolution: DrugResolution
     disclaimer: str

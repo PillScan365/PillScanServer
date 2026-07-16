@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Protocol
 
-from pillscan_server.models import DrugResolution, PillVisualAnalysis
+from pillscan_server.models import DrugResolution, ModelUsage, PillVisualAnalysis
 
 
 @dataclass(frozen=True, slots=True)
@@ -10,6 +10,12 @@ class PreparedImage:
     data: bytes
     width: int
     height: int
+
+
+@dataclass(frozen=True, slots=True)
+class VisionAnalysisResult:
+    analysis: PillVisualAnalysis
+    usage: ModelUsage
 
 
 class PillVisionAnalyzer(Protocol):
@@ -25,7 +31,7 @@ class PillVisionAnalyzer(Protocol):
         *,
         market: str,
         context: str | None,
-    ) -> PillVisualAnalysis: ...
+    ) -> VisionAnalysisResult: ...
 
 
 class DrugCatalogResolver(Protocol):

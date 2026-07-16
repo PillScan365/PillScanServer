@@ -11,6 +11,7 @@ dependencies = [
     "aiolimiter>=1.2.1",
     "aiosqlite>=0.22.1",
     "fastapi>=0.139.1",
+    "httpx>=0.28.1",
     "loguru>=0.7.3",
     "openai>=2.45.0",
     "pillow>=12.3.0",
@@ -23,6 +24,7 @@ dependencies = [
 pillscan-server = "pillscan_server.cli:main"
 pillscan-bootstrap = "pillscan_server.bootstrap:main"
 pillscan-catalog-sync = "pillscan_server.catalog_sync:main"
+pillscan-eval = "pillscan_server.eval:main"
 
 [build-system]
 requires = ["uv_build>=0.11.24,<0.12.0"]
@@ -58,6 +60,7 @@ lint = "ruff check ."
 format = "ruff format ."
 format-check = "ruff format --check ."
 typecheck = "mypy src tests"
+eval = "pillscan-eval"
 check = { depends-on = ["format-check", "lint", "typecheck", "test"] }
 
 [tool.pytest.ini_options]

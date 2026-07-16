@@ -121,7 +121,7 @@ Interactive API documentation is available at `/docs` outside production.
 
 ### Stable response contract
 
-Every successful analysis returns `schema_version: "1.1"` with three deliberately separate layers:
+Every successful analysis returns `schema_version: "1.2"` with four deliberately separate layers:
 
 - `analysis` contains only image-derived observations from the vision provider.
 - `resolution` contains authoritative catalog results. It remains `evidence_extracted` with
@@ -129,6 +129,8 @@ Every successful analysis returns `schema_version: "1.1"` with three deliberatel
 - `timings` reports upload reading, image normalization, rate-limit wait, concurrency wait,
   vision analysis, catalog resolution, and tracked pipeline total in milliseconds. The HTTP
   `Server-Timing` header also exposes these stages for client and browser profiling.
+- `usage` reports provider input, cached input, output, reasoning, and total tokens without
+  exposing prompts or image data.
 
 Every documented response field is required. Unavailable scalar values are returned as `null`,
 and unavailable collections as `[]`, so generated Swift and other API clients receive one stable
@@ -199,3 +201,19 @@ use multiple `ingredients` entries rather than flattening their generic names in
   and strength match. A loose pill additionally requires a high-confidence imprint, at least two
   matching appearance discriminators, a high score and a safe margin over the next candidate.
 - Ambiguous cases return `catalog_candidates`; missing catalog matches return `catalog_no_match`.
+
+## Evaluation
+
+`pillscan-eval` runs a paced, resumable HTTP benchmark against the real FastAPI endpoint. It writes
+one JSONL record per image immediately, plus JSON and Markdown summaries containing quality,
+safety, token cost, throughput, and p50/p95/p99 latency metrics.
+
+```bash
+uv run pillscan-eval \
+  /path/to/package_sample/manifest.json \
+  /path/to/pill_sample/manifest.json \
+  --output-dir eval-results/development-200
+```
+
+See [docs/evaluation.md](docs/evaluation.md) for dataset design, ground-truth format, metric
+definitions, pricing overrides, and the recommended 50 → 200 → 1,000 sample progression.

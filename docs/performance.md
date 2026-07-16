@@ -18,5 +18,7 @@ stage. A blurry `C9`/`AB` pill example returned ranked candidates in 3.56 s but 
 confidence threshold for a unique identity; this safety threshold must not be relaxed merely to
 claim a faster exact result.
 
-Every successful API response includes `timings`, and the same stages are emitted through Loguru
-and the standard `Server-Timing` response header.
+Every successful API response includes `timings` and provider-reported `usage`. Timings are also
+emitted through Loguru and the standard `Server-Timing` response header. Use `pillscan-eval` for a
+resumable multi-image benchmark with p50/p95/p99, token cost, safety metrics, and confidence
+intervals.

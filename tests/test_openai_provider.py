@@ -52,18 +52,29 @@ def visual_analysis() -> PillVisualAnalysis:
 
 
 class FakeResponses:
-    def __init__(self, parsed: PillVisualAnalysis | None) -> None:
+    def __init__(self, parsed: PillVisualAnalysis | None, *, include_usage: bool = True) -> None:
         self.parsed = parsed
+        self.include_usage = include_usage
         self.request: dict[str, Any] = {}
 
     async def parse(self, **kwargs: Any) -> SimpleNamespace:
         self.request = kwargs
-        return SimpleNamespace(output_parsed=self.parsed)
+        usage = SimpleNamespace(
+            input_tokens=1234,
+            input_tokens_details=SimpleNamespace(cached_tokens=34),
+            output_tokens=456,
+            output_tokens_details=SimpleNamespace(reasoning_tokens=56),
+            total_tokens=1690,
+        )
+        return SimpleNamespace(
+            output_parsed=self.parsed,
+            **({"usage": usage} if self.include_usage else {}),
+        )
 
 
 class FakeClient:
-    def __init__(self, parsed: PillVisualAnalysis | None) -> None:
-        self.responses = FakeResponses(parsed)
+    def __init__(self, parsed: PillVisualAnalysis | None, *, include_usage: bool = True) -> None:
+        self.responses = FakeResponses(parsed, include_usage=include_usage)
 
 
 @pytest.mark.asyncio
@@ -78,8 +89,11 @@ async def test_provider_builds_structured_single_image_request() -> None:
 
     result = await analyzer.analyze(image, market="TW", context=None)
 
-    assert result.subject_type == SubjectType.PACKAGE
-    assert result.state == "direct_identifiers_visible"
+    assert result.analysis.subject_type == SubjectType.PACKAGE
+    assert result.analysis.state == "direct_identifiers_visible"
+    assert result.usage.input_tokens == 1234
+    assert result.usage.cached_input_tokens == 34
+    assert result.usage.reasoning_tokens == 56
     assert analyzer.provider_name == "openai"
     assert analyzer.model_name == "test-vision"
     assert fake_client.responses.request["text_format"] is PillVisualAnalysis
@@ -108,3 +122,20 @@ async def test_provider_rejects_missing_structured_output() -> None:
             market="TW",
             context="package unavailable",
         )
+
+
+@pytest.mark.asyncio
+async def test_provider_defaults_missing_usage_to_zero() -> None:
+    analyzer = OpenAIPillVisionAnalyzer(
+        cast(AsyncOpenAI, FakeClient(visual_analysis(), include_usage=False)),
+        model="test-vision",
+        image_detail="high",
+    )
+
+    result = await analyzer.analyze(
+        PreparedImage("image/jpeg", b"capture", 100, 100),
+        market="TW",
+        context=None,
+    )
+
+    assert result.usage.total_tokens == 0
