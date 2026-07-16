@@ -205,6 +205,9 @@ def analysis(
     colors: list[str] | None = None,
     shape: str = "unknown",
     score_marks: list[str] | None = None,
+    other_text: list[str] | None = None,
+    package_text: list[str] | None = None,
+    confidence: str = "high",
 ) -> PillVisualAnalysis:
     return PillVisualAnalysis(
         subject_type=subject_type,
@@ -223,8 +226,8 @@ def analysis(
             strength=strength,
             permit_number=permit_number,
             manufacturer=manufacturer,
-            other_text=[],
-            confidence="high",
+            other_text=other_text or [],
+            confidence=confidence,
         ),
         evidence=VisualEvidence(
             dosage_form="tablet",
@@ -233,7 +236,7 @@ def analysis(
             score_marks=score_marks or [],
             symbols_or_logos=[],
             imprints=imprints or [],
-            package_text=[product_name, strength],
+            package_text=package_text if package_text is not None else [product_name, strength],
             distinctive_features=[],
         ),
         candidate_hypotheses=[],
@@ -350,6 +353,50 @@ async def test_unique_package_name_plus_separate_strength_resolves_exactly(tmp_p
                 subject_type=SubjectType.PACKAGE,
                 product_name="Paroxin F.C. Tablets",
                 strength="20mg",
+            ),
+            market="TW",
+        )
+    finally:
+        await catalog.close()
+
+    assert resolution.status == "catalog_exact"
+    assert resolution.product is not None
+    assert resolution.product.identifiers.tfda_permit_number == PERMIT_PACKAGE
+
+
+@pytest.mark.asyncio
+async def test_split_visible_package_name_is_reconstructed_exactly(tmp_path: Path) -> None:
+    catalog = await TfdaCatalog.open(make_catalog(tmp_path))
+    try:
+        resolution = await catalog.resolve(
+            analysis(
+                subject_type=SubjectType.PACKAGE,
+                product_name="百樂行",
+                other_text=["膜衣錠20毫克", "30錠"],
+                package_text=["百樂行", "膜衣錠20毫克", "30錠"],
+                confidence="medium",
+            ),
+            market="TW",
+        )
+    finally:
+        await catalog.close()
+
+    assert resolution.status == "catalog_exact"
+    assert resolution.product is not None
+    assert resolution.product.identifiers.tfda_permit_number == PERMIT_PACKAGE
+
+
+@pytest.mark.asyncio
+async def test_package_text_name_falls_back_when_product_name_field_is_empty(
+    tmp_path: Path,
+) -> None:
+    catalog = await TfdaCatalog.open(make_catalog(tmp_path))
+    try:
+        resolution = await catalog.resolve(
+            analysis(
+                subject_type=SubjectType.PACKAGE,
+                product_name="",
+                package_text=["百樂行膜衣錠20毫克"],
             ),
             market="TW",
         )

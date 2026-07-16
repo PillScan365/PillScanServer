@@ -190,6 +190,8 @@ use multiple `ingredients` entries rather than flattening their generic names in
 - `aiolimiter` bounds VLM calls per minute, while an `asyncio.Semaphore` caps concurrent analyses
   to protect Raspberry Pi memory and upstream API capacity.
 - OpenAI Responses Structured Outputs are parsed directly into Pydantic models.
+- The default `gpt-5.4-mini` high-detail path targets sub-five-second clear-package responses;
+  images are capped at 2048 pixels before upload, matching the model's high-detail limit.
 - The API accepts exactly one image and classifies it as `pill`, `package`, or `unknown`.
 - Package includes medicine boxes, blisters, bottle labels, and medication bags. Clear visible
   product names, strengths, permit numbers, and manufacturers are resolved against TFDA.

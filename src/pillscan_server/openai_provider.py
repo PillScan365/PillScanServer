@@ -17,6 +17,10 @@ Rules:
   unknown when neither class is supported by the image.
 - For a package, transcribe only identifiers that are visibly present: product name, strength,
   Taiwan permit number, manufacturer, and other useful text. Do not infer missing text.
+- For product_name, join the visible brand with adjacent variant, symptom, release-form, and dosage
+  form words that distinguish the exact marketed product. For example, if "普拿疼" and
+  "止痛加強錠" are both visible, return "普拿疼止痛加強錠", not only "普拿疼". Keep package
+  counts and promotional text in other_text instead.
 - Set state to direct_identifiers_visible only when a permit number is clear, or when both a clear
   product name and strength are visible. Otherwise use visual_evidence_only when the image is
   usable, needs_better_image when quality prevents reliable extraction, or no_visual_match when

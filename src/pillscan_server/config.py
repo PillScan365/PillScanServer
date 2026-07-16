@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     log_format: Literal["console", "json"] = "console"
 
     openai_api_key: SecretStr = Field(validation_alias="OPENAI_API_KEY")
-    openai_model: str = "gpt-5.6"
+    openai_model: str = "gpt-5.4-mini"
     openai_timeout_seconds: float = Field(default=90.0, gt=0, le=300)
     openai_max_retries: int = Field(default=2, ge=0, le=5)
     openai_image_detail: Literal["auto", "high"] = "high"
@@ -37,7 +37,7 @@ class Settings(BaseSettings):
 
     max_upload_bytes: int = Field(default=10 * 1024 * 1024, ge=1024)
     max_image_pixels: int = Field(default=40_000_000, ge=1_000_000)
-    max_image_dimension: int = Field(default=4096, ge=512, le=8192)
+    max_image_dimension: int = Field(default=2048, ge=512, le=8192)
     analyses_per_minute: int = Field(default=20, ge=1, le=10_000)
     max_concurrent_analyses: int = Field(default=2, ge=1, le=100)
     rate_limit_wait_seconds: float = Field(default=5.0, gt=0, le=60)

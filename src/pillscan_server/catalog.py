@@ -148,12 +148,11 @@ class TfdaCatalog:
 
     async def _resolve_package(self, analysis: PillVisualAnalysis) -> DrugResolution:
         visible = analysis.visible_identifiers
-        query_terms = [visible.product_name, *analysis.evidence.package_text, *visible.other_text]
-        normalized_terms = list(
-            dict.fromkeys(
-                term for value in query_terms if len(term := normalize_search(value)) >= 3
-            )
-        )[:12]
+        exact_name_resolution = await self._resolve_exact_package_name(analysis)
+        if exact_name_resolution is not None:
+            return exact_name_resolution
+
+        normalized_terms = list(_package_name_variants(analysis))[:24]
         if not normalized_terms:
             return self._no_match()
 
@@ -189,12 +188,15 @@ class TfdaCatalog:
             item
             for item in scored
             if _strong_package_match(
-                visible.product_name,
+                _package_name_variants(analysis),
                 visible.strength,
                 item,
             )
         ]
-        if visible.confidence == "high" and len(strong_matches) == 1:
+        reconstructed_exact = any(
+            _reconstructed_exact_name_match(analysis, item.record) for item in strong_matches
+        )
+        if len(strong_matches) == 1 and (visible.confidence == "high" or reconstructed_exact):
             product = await self._load_product(strong_matches[0].record.permit_number)
             return DrugResolution(
                 status=ResolutionStatus.CATALOG_EXACT,
@@ -205,28 +207,75 @@ class TfdaCatalog:
             )
         return await self._candidate_resolution(scored)
 
+    async def _resolve_exact_package_name(
+        self,
+        analysis: PillVisualAnalysis,
+    ) -> DrugResolution | None:
+        primary = normalize_search(analysis.visible_identifiers.product_name)
+        exact_variants = tuple(
+            variant
+            for variant in _package_name_variants(analysis)
+            if primary and (variant == primary or variant.startswith(primary))
+        )
+        if not exact_variants:
+            return None
+
+        placeholders = ", ".join("?" for _ in exact_variants)
+        cursor = await self._connection.execute(
+            f"""
+            SELECT permit_number
+            FROM products
+            WHERE normalized_name_zh IN ({placeholders})
+               OR normalized_name_en IN ({placeholders})
+            LIMIT 2
+            """,  # noqa: S608 - placeholders are generated internally, values stay parameterized
+            (*exact_variants, *exact_variants),
+        )
+        rows = list(await cursor.fetchall())
+        if len(rows) != 1:
+            return None
+
+        product = await self._load_product(rows[0]["permit_number"])
+        return DrugResolution(
+            status=ResolutionStatus.CATALOG_EXACT,
+            source=_source_for_products([product]),
+            product=product,
+            candidates=[],
+            catalog_version=self.catalog_version,
+        )
+
     def _score_package(
         self,
         record: SearchRecord,
         analysis: PillVisualAnalysis,
     ) -> ScoredRecord:
         visible = analysis.visible_identifiers
-        product_name = normalize_search(visible.product_name)
+        observed_names = _package_name_variants(analysis)
         names = [normalize_search(record.name_zh), normalize_search(record.name_en)]
         matching: list[str] = []
         conflicting: list[str] = []
         score = 0.0
 
-        if product_name:
-            if product_name in names:
+        if observed_names:
+            if any(observed_name in names for observed_name in observed_names):
                 score += 0.7
-                matching.append("visible product name exactly matches the TFDA product name")
-            elif any(product_name in name or name in product_name for name in names if name):
+                matching.append("visible package text exactly matches the TFDA product name")
+            elif any(
+                observed_name in name or name in observed_name
+                for observed_name in observed_names
+                for name in names
+                if name
+            ):
                 score += 0.52
-                matching.append("visible product name is contained in the TFDA product name")
+                matching.append("visible package text is contained in the TFDA product name")
             else:
                 similarity = max(
-                    (SequenceMatcher(None, product_name, name).ratio() for name in names if name),
+                    (
+                        SequenceMatcher(None, observed_name, name).ratio()
+                        for observed_name in observed_names
+                        for name in names
+                        if name
+                    ),
                     default=0.0,
                 )
                 score += similarity * 0.4
@@ -593,27 +642,21 @@ def _source_for_products(products: list[DrugProduct]) -> ResolutionSource:
     return ResolutionSource.TFDA
 
 
-def _exact_name_match(value: str, record: SearchRecord) -> bool:
-    normalized = normalize_search(value)
-    return bool(normalized) and normalized in {
-        normalize_search(record.name_zh),
-        normalize_search(record.name_en),
-    }
-
-
 def _strong_package_match(
-    product_name: str,
+    observed_names: tuple[str, ...],
     strength: str,
     candidate: ScoredRecord,
 ) -> bool:
-    observed_name = normalize_search(product_name)
     catalog_names = [
         normalize_search(candidate.record.name_zh),
         normalize_search(candidate.record.name_en),
     ]
-    exact_name = _exact_name_match(product_name, candidate.record)
-    contained_name = bool(observed_name) and any(
-        observed_name in name or name in observed_name for name in catalog_names if name
+    exact_name = any(observed_name in catalog_names for observed_name in observed_names)
+    contained_name = any(
+        observed_name in name or name in observed_name
+        for observed_name in observed_names
+        for name in catalog_names
+        if name
     )
     if not exact_name and not contained_name:
         return False
@@ -634,6 +677,41 @@ def _strong_package_match(
         )
     )
     return observed_strength in catalog_text and candidate.score >= 0.65
+
+
+def _package_name_variants(analysis: PillVisualAnalysis) -> tuple[str, ...]:
+    """Build bounded name variants from text that the VLM visibly transcribed."""
+
+    visible = analysis.visible_identifiers
+    primary = normalize_search(visible.product_name)
+    fragments = list(
+        dict.fromkeys(
+            normalized
+            for value in [*analysis.evidence.package_text, *visible.other_text]
+            if len(normalized := normalize_search(value)) >= 2 and normalized != primary
+        )
+    )[:8]
+    variants = [primary, *fragments]
+    if primary:
+        variants.extend(primary + fragment for fragment in fragments)
+        variants.extend(
+            primary + fragments[first] + fragments[second]
+            for first in range(len(fragments))
+            for second in range(first + 1, len(fragments))
+        )
+    return tuple(dict.fromkeys(value for value in variants if len(value) >= 3))
+
+
+def _reconstructed_exact_name_match(
+    analysis: PillVisualAnalysis,
+    record: SearchRecord,
+) -> bool:
+    primary = normalize_search(analysis.visible_identifiers.product_name)
+    catalog_names = {normalize_search(record.name_zh), normalize_search(record.name_en)}
+    return any(
+        variant != primary and variant in catalog_names
+        for variant in _package_name_variants(analysis)
+    )
 
 
 def _json_tuple(value: str | None) -> tuple[str, ...]:
