@@ -1,0 +1,89 @@
+[project]
+name = "pillscan-server"
+version = "0.1.0"
+description = "Async multimodal pill-analysis API with swappable vision providers"
+readme = "README.md"
+authors = [
+    { name = "Hao-wei Wu", email = "60650989+User-Howard@users.noreply.github.com" }
+]
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "aiolimiter>=1.2.1",
+    "aiosqlite>=0.22.1",
+    "fastapi>=0.139.1",
+    "loguru>=0.7.3",
+    "openai>=2.45.0",
+    "pillow>=12.3.0",
+    "pydantic-settings>=2.14.2",
+    "python-multipart>=0.0.32",
+    "uvicorn[standard]>=0.51.0",
+]
+
+[project.scripts]
+pillscan-server = "pillscan_server.cli:main"
+pillscan-bootstrap = "pillscan_server.bootstrap:main"
+pillscan-catalog-sync = "pillscan_server.catalog_sync:main"
+
+[build-system]
+requires = ["uv_build>=0.11.24,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "asgi-lifespan>=2.1.0",
+    "mypy>=2.3.0",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.15.21",
+    "types-pillow>=10.2.0.20240822",
+]
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["linux-64", "linux-aarch64", "osx-arm64"]
+
+[tool.pixi.pypi-dependencies]
+pillscan-server = { path = ".", editable = true }
+
+[tool.pixi.environments]
+default = { features = ["dev"], solve-group = "default" }
+
+[tool.pixi.tasks]
+catalog-sync = "pillscan-catalog-sync"
+serve = { cmd = "pillscan-server", depends-on = ["catalog-sync"] }
+dev = "uvicorn pillscan_server.main:app --host 0.0.0.0 --port 8000 --reload"
+test = "pytest"
+lint = "ruff check ."
+format = "ruff format ."
+format-check = "ruff format --check ."
+typecheck = "mypy src tests"
+check = { depends-on = ["format-check", "lint", "typecheck", "test"] }
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers --cov=pillscan_server --cov-report=term-missing"
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+
+[tool.coverage.report]
+fail_under = 85
+show_missing = true
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC", "S", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101", "S105", "S106"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+plugins = ["pydantic.mypy"]

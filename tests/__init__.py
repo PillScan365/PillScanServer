@@ -1,0 +1,1 @@
+"""PillScan Server tests."""
