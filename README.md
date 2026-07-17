@@ -56,17 +56,43 @@ uv run uvicorn pillscan_server.main:app --host 0.0.0.0 --port 8000 --reload
 
 ## Run with Pixi
 
-Pixi reads the same `pyproject.toml`, resolves Python and all PyPI dependencies, and provides a
-one-command task suitable for the 5090 workstation:
+Pixi reads the same `pyproject.toml` and lockfile, installs Python and all dependencies, creates a
+local config, downloads the TFDA/NHIA datasets, builds SQLite atomically, and checks readiness.
+On a new Linux or macOS computer, Pixi itself is the only prerequisite:
+
+```bash
+curl -fsSL https://pixi.sh/install.sh | sh
+git clone https://github.com/PillScan365/PillScanServer.git
+cd PillScanServer
+pixi run setup
+```
+
+`setup` never overwrites an existing `.env.local`. On a fresh clone it creates a private copy from
+`.env.example`; set `OPENAI_API_KEY` there (or in the process environment), then rerun
+`pixi run doctor`. The key is never printed. Start the service after the readiness check passes:
 
 ```bash
 pixi run serve
 ```
 
-Quality gate:
+The first `pixi run` also materializes the locked environment, so a separate `pixi install` is not
+required. Common operations are available as named tasks:
+
+| Command | Purpose |
+| --- | --- |
+| `pixi run setup` | Idempotent first-time setup: config, official data, SQLite, readiness checks |
+| `pixi run doctor` | Check the key and SQLite without downloading or changing anything |
+| `pixi run data-sync` | Download only missing sources and build only when the catalog is absent |
+| `pixi run data-refresh` | Redownload all current TFDA/NHIA sources and atomically rebuild SQLite |
+| `pixi run data-rebuild` | Rebuild SQLite only from already cached raw files |
+| `pixi run serve` | Run setup, then start FastAPI on the configured host and port |
+| `pixi run dev` | Run setup, then start FastAPI with reload enabled |
+| `pixi run check` | Run formatting, lint, strict typing, tests, and coverage |
+
+To inspect every available command:
 
 ```bash
-pixi run check
+pixi task list
 ```
 
 ## Run on Raspberry Pi with a container
