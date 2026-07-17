@@ -15,6 +15,22 @@ class SubjectType(StrEnum):
     UNKNOWN = "unknown"
 
 
+class MedicationSubjectType(StrEnum):
+    PILL = "pill"
+    PACKAGE = "package"
+    MEDICATION_DOCUMENT = "medication_document"
+    UNKNOWN = "unknown"
+
+
+class MedicationDocumentType(StrEnum):
+    NONE = "none"
+    PRESCRIPTION = "prescription"
+    MEDICATION_LIST = "medication_list"
+    MEDICATION_BAG = "medication_bag"
+    DISPENSING_LABEL = "dispensing_label"
+    UNKNOWN = "unknown"
+
+
 class ObservedImprint(StrictModel):
     text: str = Field(description="Exact visible imprint text; use an empty string when unreadable")
     alternatives: list[str] = Field(description="Plausible alternate readings, most likely first")
@@ -73,6 +89,61 @@ class PillVisualAnalysis(StrictModel):
     visible_identifiers: VisibleIdentifiers
     evidence: VisualEvidence
     candidate_hypotheses: list[CandidateHypothesis]
+    uncertainty_reasons: list[str]
+    next_actions: list[str]
+
+
+class MedicationDirections(StrictModel):
+    dose: str = Field(description="Visible dose per administration; empty when absent")
+    frequency: str = Field(description="Visible administration frequency; empty when absent")
+    route: str = Field(description="Visible administration route; empty when absent")
+    duration: str = Field(description="Visible treatment duration; empty when absent")
+    quantity: str = Field(description="Visible dispensed quantity; empty when absent")
+    instructions: list[str] = Field(description="Other visible directions, copied without advice")
+
+
+class ExtractedMedication(StrictModel):
+    product_name: str = Field(description="Exact visible brand or product name; empty when absent")
+    generic_name: str = Field(description="Exact visible generic name; empty when absent")
+    strength: str = Field(description="Exact visible strength; empty when absent")
+    dosage_form: str = Field(description="Exact visible dosage form; empty when absent")
+    permit_number: str = Field(description="Exact visible Taiwan permit number; empty when absent")
+    nhi_code: str = Field(description="Exact visible Taiwan NHI drug code; empty when absent")
+    manufacturer: str = Field(description="Exact visible manufacturer; empty when absent")
+    directions: MedicationDirections
+    source_text: list[str] = Field(description="Visible text supporting this medication row")
+    confidence: Literal["low", "medium", "high"]
+    evidence: VisualEvidence
+
+
+class MedicationImageAnalysis(StrictModel):
+    """Provider output for a single image that may contain several medications."""
+
+    subject_type: MedicationSubjectType
+    document_type: MedicationDocumentType
+    image_quality: ImageQuality
+    items: list[ExtractedMedication]
+    unresolved_text: list[str]
+    uncertainty_reasons: list[str]
+    next_actions: list[str]
+
+    @model_validator(mode="after")
+    def validate_subject_shape(self) -> Self:
+        if self.subject_type is MedicationSubjectType.MEDICATION_DOCUMENT:
+            if self.document_type is MedicationDocumentType.NONE:
+                raise ValueError("medication_document requires a document type")
+        elif self.document_type is not MedicationDocumentType.NONE:
+            raise ValueError("non-document subjects require document_type=none")
+        if self.subject_type is MedicationSubjectType.UNKNOWN and self.items:
+            raise ValueError("unknown subjects cannot contain medication items")
+        return self
+
+
+class MedicationAnalysisSummary(StrictModel):
+    subject_type: MedicationSubjectType
+    document_type: MedicationDocumentType
+    image_quality: ImageQuality
+    unresolved_text: list[str]
     uncertainty_reasons: list[str]
     next_actions: list[str]
 
@@ -216,6 +287,25 @@ class PillAnalysisResponse(StrictModel):
     usage: ModelUsage
     analysis: PillVisualAnalysis
     resolution: DrugResolution
+    disclaimer: str
+
+
+class MedicationResultItem(StrictModel):
+    index: int = Field(ge=0)
+    extracted: ExtractedMedication
+    resolution: DrugResolution
+
+
+class MedicationAnalysisResponse(StrictModel):
+    schema_version: Literal["2.0"]
+    analysis_id: UUID
+    request_id: str
+    provider: str
+    model: str
+    timings: PipelineTimings
+    usage: ModelUsage
+    analysis: MedicationAnalysisSummary
+    items: list[MedicationResultItem]
     disclaimer: str
 
 

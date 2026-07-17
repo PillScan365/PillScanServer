@@ -16,11 +16,15 @@ from pillscan_server.models import (
     DrugIngredient,
     DrugProduct,
     DrugResolution,
+    ExtractedMedication,
+    ImageQuality,
+    MedicationSubjectType,
     PillVisualAnalysis,
     ProductIdentifiers,
     ResolutionSource,
     ResolutionStatus,
     SubjectType,
+    VisibleIdentifiers,
 )
 
 MAX_CANDIDATE_POOL = 250
@@ -109,6 +113,52 @@ class TfdaCatalog:
         if analysis.subject_type is SubjectType.PILL:
             return await self._resolve_pill(analysis)
 
+    async def resolve_medication(
+        self,
+        item: ExtractedMedication,
+        *,
+        image_quality: ImageQuality,
+        subject_type: MedicationSubjectType,
+        market: str,
+    ) -> DrugResolution:
+        analysis = _analysis_from_medication_item(
+            item,
+            image_quality=image_quality,
+            subject_type=subject_type,
+        )
+        if market.strip().upper() not in {"TW", "TAIWAN"}:
+            return _not_queried_resolution(analysis)
+        if not image_quality.sufficient_for_analysis:
+            return _not_queried_resolution(analysis)
+        if item.nhi_code and item.confidence == "high":
+            direct = await self._resolve_nhi_code(item.nhi_code)
+            if direct is not None:
+                return direct
+        return await self.resolve(analysis, market=market)
+
+    async def _resolve_nhi_code(self, visible_code: str) -> DrugResolution | None:
+        normalized = "".join(visible_code.split()).upper()
+        cursor = await self._connection.execute(
+            """
+            SELECT DISTINCT permit_number
+            FROM product_codes
+            WHERE code_type = 'nhi' AND code = ? COLLATE NOCASE
+            LIMIT 2
+            """,
+            (normalized,),
+        )
+        rows = list(await cursor.fetchall())
+        if len(rows) != 1:
+            return None
+        product = await self._load_product(rows[0]["permit_number"])
+        return DrugResolution(
+            status=ResolutionStatus.CATALOG_EXACT,
+            source=ResolutionSource.TFDA_NHI,
+            product=product,
+            candidates=[],
+            catalog_version=self.catalog_version,
+        )
+
     async def _resolve_permit(self, analysis: PillVisualAnalysis) -> DrugResolution | None:
         visible = analysis.visible_identifiers.permit_number
         if not visible:
@@ -157,20 +207,26 @@ class TfdaCatalog:
             return self._no_match()
 
         permits: set[str] = set()
-        for term in normalized_terms:
-            cursor = await self._connection.execute(
-                """
-                SELECT DISTINCT permit_number
-                FROM search_terms
-                WHERE normalized_term = ?
-                   OR normalized_term LIKE '%' || ? || '%'
-                   OR ? LIKE '%' || normalized_term || '%'
-                LIMIT ?
-                """,
-                (term, term, term, MAX_CANDIDATE_POOL),
-            )
-            permits.update(row["permit_number"] for row in await cursor.fetchall())
-            if len(permits) >= MAX_CANDIDATE_POOL:
+        primary = normalize_search(visible.product_name)
+        primary_terms = [primary] if len(primary) >= 3 else []
+        fallback_terms = [term for term in normalized_terms if term != primary]
+        for term_group in (primary_terms, fallback_terms):
+            for term in term_group:
+                cursor = await self._connection.execute(
+                    """
+                    SELECT DISTINCT permit_number
+                    FROM search_terms
+                    WHERE normalized_term = ?
+                       OR normalized_term LIKE '%' || ? || '%'
+                       OR ? LIKE '%' || normalized_term || '%'
+                    LIMIT ?
+                    """,
+                    (term, term, term, MAX_CANDIDATE_POOL),
+                )
+                permits.update(row["permit_number"] for row in await cursor.fetchall())
+                if len(permits) >= MAX_CANDIDATE_POOL:
+                    break
+            if permits:
                 break
         if not permits:
             return self._no_match()
@@ -252,37 +308,43 @@ class TfdaCatalog:
         visible = analysis.visible_identifiers
         observed_names = _package_name_variants(analysis)
         names = [normalize_search(record.name_zh), normalize_search(record.name_en)]
+        primary = normalize_search(visible.product_name)
+        if not primary and observed_names:
+            primary = observed_names[0]
+        supporting_variants = [name for name in observed_names if name != primary]
         matching: list[str] = []
         conflicting: list[str] = []
         score = 0.0
 
-        if observed_names:
-            if any(observed_name in names for observed_name in observed_names):
-                score += 0.7
-                matching.append("visible package text exactly matches the TFDA product name")
-            elif any(
-                observed_name in name or name in observed_name
-                for observed_name in observed_names
-                for name in names
-                if name
-            ):
-                score += 0.52
-                matching.append("visible package text is contained in the TFDA product name")
+        if primary:
+            if primary in names:
+                score += 0.75
+                matching.append("visible primary product name exactly matches TFDA")
+            elif any(primary in name or name in primary for name in names if name):
+                score += 0.64
+                matching.append("visible primary product name is contained in the TFDA name")
             else:
                 similarity = max(
-                    (
-                        SequenceMatcher(None, observed_name, name).ratio()
-                        for observed_name in observed_names
-                        for name in names
-                        if name
-                    ),
+                    (SequenceMatcher(None, primary, name).ratio() for name in names if name),
                     default=0.0,
                 )
-                score += similarity * 0.4
+                score += similarity * 0.45
                 if similarity >= 0.65:
-                    matching.append("visible product name is textually similar")
+                    matching.append("visible primary product name is textually similar")
                 else:
-                    conflicting.append("visible product name differs from the TFDA product name")
+                    conflicting.append("visible primary product name differs from TFDA")
+
+        if any(variant in names for variant in supporting_variants):
+            score += 0.16
+            matching.append("additional visible text reconstructs the exact TFDA product name")
+        elif any(
+            variant in name or name in variant
+            for variant in supporting_variants
+            for name in names
+            if name
+        ):
+            score += 0.08
+            matching.append("additional visible text supports the TFDA product name")
 
         combined = normalize_search(
             " ".join(
@@ -633,6 +695,67 @@ def _not_queried_resolution(analysis: PillVisualAnalysis) -> DrugResolution:
         product=None,
         candidates=[],
         catalog_version=None,
+    )
+
+
+def _analysis_from_medication_item(
+    item: ExtractedMedication,
+    *,
+    image_quality: ImageQuality,
+    subject_type: MedicationSubjectType,
+) -> PillVisualAnalysis:
+    catalog_subject = (
+        SubjectType.PILL if subject_type is MedicationSubjectType.PILL else SubjectType.PACKAGE
+    )
+    product_name = item.product_name or item.generic_name
+    direct_identifiers = bool(
+        item.permit_number or item.nhi_code or (product_name and item.strength)
+    )
+    state = (
+        "needs_better_image"
+        if not image_quality.sufficient_for_analysis
+        else "direct_identifiers_visible"
+        if direct_identifiers
+        else "visual_evidence_only"
+    )
+    other_text = list(
+        dict.fromkeys(
+            value
+            for value in [item.generic_name, item.dosage_form, *item.source_text]
+            if value and value != product_name
+        )
+    )
+    package_text = list(
+        dict.fromkeys(
+            value
+            for value in [
+                *item.evidence.package_text,
+                *item.source_text,
+                item.product_name,
+                item.generic_name,
+                item.strength,
+            ]
+            if value
+        )
+    )
+    return PillVisualAnalysis(
+        subject_type=catalog_subject,
+        state=state,
+        image_quality=image_quality,
+        visible_identifiers=VisibleIdentifiers(
+            product_name=product_name,
+            strength=item.strength,
+            permit_number=item.permit_number,
+            manufacturer=item.manufacturer,
+            other_text=other_text,
+            confidence=item.confidence,
+        ),
+        evidence=item.evidence.model_copy(update={"package_text": package_text}),
+        candidate_hypotheses=[],
+        uncertainty_reasons=[]
+        if item.confidence == "high"
+        else ["Extracted item is not high confidence."],
+        next_actions=[],
     )
 
 

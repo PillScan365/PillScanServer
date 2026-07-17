@@ -1,7 +1,15 @@
 from dataclasses import dataclass
 from typing import Protocol
 
-from pillscan_server.models import DrugResolution, ModelUsage, PillVisualAnalysis
+from pillscan_server.models import (
+    DrugResolution,
+    ExtractedMedication,
+    ImageQuality,
+    MedicationImageAnalysis,
+    MedicationSubjectType,
+    ModelUsage,
+    PillVisualAnalysis,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,6 +23,12 @@ class PreparedImage:
 @dataclass(frozen=True, slots=True)
 class VisionAnalysisResult:
     analysis: PillVisualAnalysis
+    usage: ModelUsage
+
+
+@dataclass(frozen=True, slots=True)
+class MedicationVisionAnalysisResult:
+    analysis: MedicationImageAnalysis
     usage: ModelUsage
 
 
@@ -33,11 +47,28 @@ class PillVisionAnalyzer(Protocol):
         context: str | None,
     ) -> VisionAnalysisResult: ...
 
+    async def analyze_medications(
+        self,
+        image: PreparedImage,
+        *,
+        market: str,
+        context: str | None,
+    ) -> MedicationVisionAnalysisResult: ...
+
 
 class DrugCatalogResolver(Protocol):
     async def resolve(
         self,
         analysis: PillVisualAnalysis,
         *,
+        market: str,
+    ) -> DrugResolution: ...
+
+    async def resolve_medication(
+        self,
+        item: ExtractedMedication,
+        *,
+        image_quality: ImageQuality,
+        subject_type: MedicationSubjectType,
         market: str,
     ) -> DrugResolution: ...

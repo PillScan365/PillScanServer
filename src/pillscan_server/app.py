@@ -21,6 +21,7 @@ from pillscan_server.middleware import RequestIDMiddleware
 from pillscan_server.models import (
     ErrorResponse,
     HealthResponse,
+    MedicationAnalysisResponse,
     PillAnalysisResponse,
 )
 from pillscan_server.openai_provider import OpenAIPillVisionAnalyzer
@@ -177,6 +178,41 @@ def _router() -> APIRouter:
     ) -> PillAnalysisResponse:
         service = cast(PillAnalysisService, request.state.analysis_service)
         response = await service.analyze(
+            image,
+            market=market,
+            context=context,
+            request_id=request.state.request_id,
+        )
+        request.state.pipeline_timings = response.timings
+        return response
+
+    @router.post(
+        "/v2/medications/analyze",
+        response_model=MedicationAnalysisResponse,
+        responses={
+            400: {"model": ErrorResponse},
+            429: {"model": ErrorResponse},
+            502: {"model": ErrorResponse},
+        },
+        tags=["medications"],
+    )
+    async def analyze_medications(
+        request: Request,
+        image: Annotated[
+            UploadFile,
+            File(
+                description=(
+                    "Single photo of a pill, medication package, prescription, medication list, "
+                    "medication bag, or dispensing label"
+                )
+            ),
+        ],
+        _auth: Annotated[None, Depends(require_api_token)],
+        market: Annotated[str, Form(min_length=2, max_length=32)] = "TW",
+        context: Annotated[str | None, Form(max_length=500)] = None,
+    ) -> MedicationAnalysisResponse:
+        service = cast(PillAnalysisService, request.state.analysis_service)
+        response = await service.analyze_medications(
             image,
             market=market,
             context=context,

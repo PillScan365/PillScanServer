@@ -6,6 +6,7 @@ from pillscan_server.models import (
     DrugIngredient,
     DrugProduct,
     DrugResolution,
+    MedicationImageAnalysis,
     ProductIdentifiers,
     ResolutionSource,
     ResolutionStatus,
@@ -104,4 +105,76 @@ def test_catalog_candidates_require_nonempty_ranked_candidates() -> None:
             product=None,
             candidates=[],
             catalog_version="2026-07-16",
+        )
+
+
+def test_medication_document_requires_document_type() -> None:
+    with pytest.raises(ValidationError, match="requires a document type"):
+        MedicationImageAnalysis.model_validate(
+            {
+                "subject_type": "medication_document",
+                "document_type": "none",
+                "image_quality": {
+                    "sufficient_for_analysis": True,
+                    "blur": "none",
+                    "glare": "none",
+                    "subject_fills_frame": True,
+                    "text_readability": "clear",
+                },
+                "items": [],
+                "unresolved_text": [],
+                "uncertainty_reasons": [],
+                "next_actions": [],
+            }
+        )
+
+
+def test_unknown_medication_image_cannot_contain_items() -> None:
+    with pytest.raises(ValidationError, match="cannot contain medication items"):
+        MedicationImageAnalysis.model_validate(
+            {
+                "subject_type": "unknown",
+                "document_type": "none",
+                "image_quality": {
+                    "sufficient_for_analysis": True,
+                    "blur": "none",
+                    "glare": "none",
+                    "subject_fills_frame": True,
+                    "text_readability": "none",
+                },
+                "items": [
+                    {
+                        "product_name": "",
+                        "generic_name": "",
+                        "strength": "",
+                        "dosage_form": "",
+                        "permit_number": "",
+                        "nhi_code": "",
+                        "manufacturer": "",
+                        "directions": {
+                            "dose": "",
+                            "frequency": "",
+                            "route": "",
+                            "duration": "",
+                            "quantity": "",
+                            "instructions": [],
+                        },
+                        "source_text": [],
+                        "confidence": "low",
+                        "evidence": {
+                            "dosage_form": "unknown",
+                            "colors": [],
+                            "shape": "unknown",
+                            "score_marks": [],
+                            "symbols_or_logos": [],
+                            "imprints": [],
+                            "package_text": [],
+                            "distinctive_features": [],
+                        },
+                    }
+                ],
+                "unresolved_text": [],
+                "uncertainty_reasons": [],
+                "next_actions": [],
+            }
         )

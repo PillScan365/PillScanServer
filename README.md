@@ -1,8 +1,9 @@
 # PillScan Server
 
-An async FastAPI service that accepts one photo of either a loose pill or medication package,
-normalizes it, automatically classifies the subject with an OpenAI vision model, and returns
-schema-validated visual evidence resolved against a local TFDA/NHIA medication catalog.
+An async FastAPI service that accepts one photo of a loose pill, medication package, prescription,
+medication list, medication bag, or dispensing label; normalizes it; classifies the subject with
+an OpenAI vision model; and resolves the extracted medication items against a local TFDA/NHIA
+catalog.
 
 The vision model never creates official identifiers. The server uses the full TFDA permit number
 as the canonical Taiwan product ID, joins official ingredients and NHIA codes, and abstains or
@@ -116,6 +117,21 @@ curl -X POST http://localhost:8000/v1/pills/analyze \
   -F "image=@capture.jpg" \
   -F "market=TW"
 ```
+
+Analyze one image that may contain several medications, such as a prescription or medication
+list:
+
+```bash
+curl -X POST http://localhost:8000/v2/medications/analyze \
+  -H "Authorization: Bearer $PILLSCAN_API_TOKEN" \
+  -F "image=@prescription.jpg" \
+  -F "market=TW"
+```
+
+The v2 response always contains `items: []`. A pill or package normally produces one item; a
+medication document can produce several. Every item keeps its own visible extraction, directions
+transcription, TFDA/NHIA resolution, candidates, and uncertainty. The image is sent to the vision
+provider once, then all item lookups run against the local SQLite catalog.
 
 Interactive API documentation is available at `/docs` outside production.
 
