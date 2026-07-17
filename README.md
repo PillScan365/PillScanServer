@@ -1,8 +1,9 @@
 # PillScan Server
 
-An async FastAPI service that accepts one photo of either a loose pill or medication package,
-normalizes it, automatically classifies the subject with an OpenAI vision model, and returns
-schema-validated visual evidence resolved against a local TFDA/NHIA medication catalog.
+An async FastAPI service that accepts one photo of a loose pill, medication package, prescription,
+medication list, medication bag, or dispensing label; normalizes it; classifies the subject with
+an OpenAI vision model; and resolves the extracted medication items against a local TFDA/NHIA
+catalog.
 
 The vision model never creates official identifiers. The server uses the full TFDA permit number
 as the canonical Taiwan product ID, joins official ingredients and NHIA codes, and abstains or
@@ -55,17 +56,43 @@ uv run uvicorn pillscan_server.main:app --host 0.0.0.0 --port 8000 --reload
 
 ## Run with Pixi
 
-Pixi reads the same `pyproject.toml`, resolves Python and all PyPI dependencies, and provides a
-one-command task suitable for the 5090 workstation:
+Pixi reads the same `pyproject.toml` and lockfile, installs Python and all dependencies, creates a
+local config, downloads the TFDA/NHIA datasets, builds SQLite atomically, and checks readiness.
+On a new Linux or macOS computer, Pixi itself is the only prerequisite:
+
+```bash
+curl -fsSL https://pixi.sh/install.sh | sh
+git clone https://github.com/PillScan365/PillScanServer.git
+cd PillScanServer
+pixi run setup
+```
+
+`setup` never overwrites an existing `.env.local`. On a fresh clone it creates a private copy from
+`.env.example`; set `OPENAI_API_KEY` there (or in the process environment), then rerun
+`pixi run doctor`. The key is never printed. Start the service after the readiness check passes:
 
 ```bash
 pixi run serve
 ```
 
-Quality gate:
+The first `pixi run` also materializes the locked environment, so a separate `pixi install` is not
+required. Common operations are available as named tasks:
+
+| Command | Purpose |
+| --- | --- |
+| `pixi run setup` | Idempotent first-time setup: config, official data, SQLite, readiness checks |
+| `pixi run doctor` | Check the key and SQLite without downloading or changing anything |
+| `pixi run data-sync` | Download only missing sources and build only when the catalog is absent |
+| `pixi run data-refresh` | Redownload all current TFDA/NHIA sources and atomically rebuild SQLite |
+| `pixi run data-rebuild` | Rebuild SQLite only from already cached raw files |
+| `pixi run serve` | Run setup, then start FastAPI on the configured host and port |
+| `pixi run dev` | Run setup, then start FastAPI with reload enabled |
+| `pixi run check` | Run formatting, lint, strict typing, tests, and coverage |
+
+To inspect every available command:
 
 ```bash
-pixi run check
+pixi task list
 ```
 
 ## Run on Raspberry Pi with a container
@@ -117,11 +144,26 @@ curl -X POST http://localhost:8000/v1/pills/analyze \
   -F "market=TW"
 ```
 
+Analyze one image that may contain several medications, such as a prescription or medication
+list:
+
+```bash
+curl -X POST http://localhost:8000/v2/medications/analyze \
+  -H "Authorization: Bearer $PILLSCAN_API_TOKEN" \
+  -F "image=@prescription.jpg" \
+  -F "market=TW"
+```
+
+The v2 response always contains `items: []`. A pill or package normally produces one item; a
+medication document can produce several. Every item keeps its own visible extraction, directions
+transcription, TFDA/NHIA resolution, candidates, and uncertainty. The image is sent to the vision
+provider once, then all item lookups run against the local SQLite catalog.
+
 Interactive API documentation is available at `/docs` outside production.
 
 ### Stable response contract
 
-Every successful analysis returns `schema_version: "1.1"` with three deliberately separate layers:
+Every successful analysis returns `schema_version: "1.2"` with four deliberately separate layers:
 
 - `analysis` contains only image-derived observations from the vision provider.
 - `resolution` contains authoritative catalog results. It remains `evidence_extracted` with
@@ -129,6 +171,8 @@ Every successful analysis returns `schema_version: "1.1"` with three deliberatel
 - `timings` reports upload reading, image normalization, rate-limit wait, concurrency wait,
   vision analysis, catalog resolution, and tracked pipeline total in milliseconds. The HTTP
   `Server-Timing` header also exposes these stages for client and browser profiling.
+- `usage` reports provider input, cached input, output, reasoning, and total tokens without
+  exposing prompts or image data.
 
 Every documented response field is required. Unavailable scalar values are returned as `null`,
 and unavailable collections as `[]`, so generated Swift and other API clients receive one stable
@@ -199,3 +243,19 @@ use multiple `ingredients` entries rather than flattening their generic names in
   and strength match. A loose pill additionally requires a high-confidence imprint, at least two
   matching appearance discriminators, a high score and a safe margin over the next candidate.
 - Ambiguous cases return `catalog_candidates`; missing catalog matches return `catalog_no_match`.
+
+## Evaluation
+
+`pillscan-eval` runs a paced, resumable HTTP benchmark against the real FastAPI endpoint. It writes
+one JSONL record per image immediately, plus JSON and Markdown summaries containing quality,
+safety, token cost, throughput, and p50/p95/p99 latency metrics.
+
+```bash
+uv run pillscan-eval \
+  /path/to/package_sample/manifest.json \
+  /path/to/pill_sample/manifest.json \
+  --output-dir eval-results/development-200
+```
+
+See [docs/evaluation.md](docs/evaluation.md) for dataset design, ground-truth format, metric
+definitions, pricing overrides, and the recommended 50 → 200 → 1,000 sample progression.

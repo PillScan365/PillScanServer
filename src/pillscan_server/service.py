@@ -14,6 +14,9 @@ from pillscan_server.imaging import prepare_upload
 from pillscan_server.models import (
     IDENTIFICATION_DISCLAIMER,
     DrugResolution,
+    MedicationAnalysisResponse,
+    MedicationAnalysisSummary,
+    MedicationResultItem,
     PillAnalysisResponse,
     PipelineTimings,
     ResolutionSource,
@@ -52,12 +55,14 @@ class PillAnalysisService:
         prepared = await prepare_upload(upload, self._settings)
         async with self._gate.acquire() as gate_wait:
             vision_started_at = perf_counter()
-            analysis = await self._analyzer.analyze(
+            vision_result = await self._analyzer.analyze(
                 prepared.image,
                 market=market,
                 context=context,
             )
             vision_analysis_ms = _elapsed_ms(vision_started_at)
+
+        analysis = vision_result.analysis
 
         catalog_started_at = perf_counter()
         resolution = (
@@ -82,14 +87,93 @@ class PillAnalysisService:
             pipeline_total_ms=_elapsed_ms(pipeline_started_at),
         )
         return PillAnalysisResponse(
-            schema_version="1.1",
+            schema_version="1.2",
             analysis_id=uuid4(),
             request_id=request_id,
             provider=self._analyzer.provider_name,
             model=self._analyzer.model_name,
             timings=timings,
+            usage=vision_result.usage,
             analysis=analysis,
             resolution=resolution,
+            disclaimer=IDENTIFICATION_DISCLAIMER,
+        )
+
+    async def analyze_medications(
+        self,
+        upload: UploadFile,
+        *,
+        market: str,
+        context: str | None,
+        request_id: str,
+    ) -> MedicationAnalysisResponse:
+        pipeline_started_at = perf_counter()
+        prepared = await prepare_upload(upload, self._settings)
+        async with self._gate.acquire() as gate_wait:
+            vision_started_at = perf_counter()
+            vision_result = await self._analyzer.analyze_medications(
+                prepared.image,
+                market=market,
+                context=context,
+            )
+            vision_analysis_ms = _elapsed_ms(vision_started_at)
+
+        extracted = vision_result.analysis
+        catalog_started_at = perf_counter()
+        items: list[MedicationResultItem] = []
+        for index, medication in enumerate(extracted.items):
+            resolution = (
+                await self._catalog.resolve_medication(
+                    medication,
+                    image_quality=extracted.image_quality,
+                    subject_type=extracted.subject_type,
+                    market=market,
+                )
+                if self._catalog is not None
+                else DrugResolution(
+                    status=_pre_catalog_medication_status(
+                        sufficient=extracted.image_quality.sufficient_for_analysis
+                    ),
+                    source=ResolutionSource.NOT_QUERIED,
+                    product=None,
+                    candidates=[],
+                    catalog_version=None,
+                )
+            )
+            items.append(
+                MedicationResultItem(
+                    index=index,
+                    extracted=medication,
+                    resolution=resolution,
+                )
+            )
+        catalog_resolution_ms = _elapsed_ms(catalog_started_at)
+        timings = PipelineTimings(
+            upload_read_ms=prepared.upload_read_ms,
+            image_normalization_ms=prepared.image_normalization_ms,
+            rate_limit_wait_ms=gate_wait.rate_limit_wait_ms,
+            concurrency_wait_ms=gate_wait.concurrency_wait_ms,
+            vision_analysis_ms=vision_analysis_ms,
+            catalog_resolution_ms=catalog_resolution_ms,
+            pipeline_total_ms=_elapsed_ms(pipeline_started_at),
+        )
+        return MedicationAnalysisResponse(
+            schema_version="2.0",
+            analysis_id=uuid4(),
+            request_id=request_id,
+            provider=self._analyzer.provider_name,
+            model=self._analyzer.model_name,
+            timings=timings,
+            usage=vision_result.usage,
+            analysis=MedicationAnalysisSummary(
+                subject_type=extracted.subject_type,
+                document_type=extracted.document_type,
+                image_quality=extracted.image_quality,
+                unresolved_text=extracted.unresolved_text,
+                uncertainty_reasons=extracted.uncertainty_reasons,
+                next_actions=extracted.next_actions,
+            ),
+            items=items,
             disclaimer=IDENTIFICATION_DISCLAIMER,
         )
 
@@ -102,6 +186,12 @@ def _pre_catalog_status(
     if analysis_state == "no_visual_match":
         return ResolutionStatus.NOT_MEDICATION_IMAGE
     return ResolutionStatus.EVIDENCE_EXTRACTED
+
+
+def _pre_catalog_medication_status(*, sufficient: bool) -> ResolutionStatus:
+    return (
+        ResolutionStatus.EVIDENCE_EXTRACTED if sufficient else ResolutionStatus.NEEDS_BETTER_IMAGE
+    )
 
 
 class AnalysisGate:

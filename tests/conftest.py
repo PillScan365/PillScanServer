@@ -7,13 +7,23 @@ from pydantic import SecretStr
 
 from pillscan_server.config import Settings
 from pillscan_server.models import (
+    ExtractedMedication,
     ImageQuality,
+    MedicationDirections,
+    MedicationDocumentType,
+    MedicationImageAnalysis,
+    MedicationSubjectType,
+    ModelUsage,
     PillVisualAnalysis,
     SubjectType,
     VisibleIdentifiers,
     VisualEvidence,
 )
-from pillscan_server.protocols import PreparedImage
+from pillscan_server.protocols import (
+    MedicationVisionAnalysisResult,
+    PreparedImage,
+    VisionAnalysisResult,
+)
 
 
 class FakeAnalyzer:
@@ -29,39 +39,99 @@ class FakeAnalyzer:
         *,
         market: str,
         context: str | None,
-    ) -> PillVisualAnalysis:
+    ) -> VisionAnalysisResult:
         self.received_image = image
-        return PillVisualAnalysis(
-            subject_type=SubjectType.PILL,
-            state="visual_evidence_only",
-            image_quality=ImageQuality(
-                sufficient_for_analysis=True,
-                blur="none",
-                glare="none",
-                subject_fills_frame=True,
-                text_readability="clear",
+        return VisionAnalysisResult(
+            analysis=PillVisualAnalysis(
+                subject_type=SubjectType.PILL,
+                state="visual_evidence_only",
+                image_quality=ImageQuality(
+                    sufficient_for_analysis=True,
+                    blur="none",
+                    glare="none",
+                    subject_fills_frame=True,
+                    text_readability="clear",
+                ),
+                visible_identifiers=VisibleIdentifiers(
+                    product_name="",
+                    strength="",
+                    permit_number="",
+                    manufacturer="",
+                    other_text=[],
+                    confidence="low",
+                ),
+                evidence=VisualEvidence(
+                    dosage_form="tablet",
+                    colors=["white"],
+                    shape="round",
+                    score_marks=[],
+                    symbols_or_logos=[],
+                    imprints=[],
+                    package_text=[],
+                    distinctive_features=[],
+                ),
+                candidate_hypotheses=[],
+                uncertainty_reasons=["Authoritative catalog verification has not run."],
+                next_actions=["Verify the visible evidence against the market catalog."],
             ),
-            visible_identifiers=VisibleIdentifiers(
-                product_name="",
-                strength="",
-                permit_number="",
-                manufacturer="",
-                other_text=[],
-                confidence="low",
+            usage=ModelUsage.empty(),
+        )
+
+    async def analyze_medications(
+        self,
+        image: PreparedImage,
+        *,
+        market: str,
+        context: str | None,
+    ) -> MedicationVisionAnalysisResult:
+        self.received_image = image
+        return MedicationVisionAnalysisResult(
+            analysis=MedicationImageAnalysis(
+                subject_type=MedicationSubjectType.PILL,
+                document_type=MedicationDocumentType.NONE,
+                image_quality=ImageQuality(
+                    sufficient_for_analysis=True,
+                    blur="none",
+                    glare="none",
+                    subject_fills_frame=True,
+                    text_readability="clear",
+                ),
+                items=[
+                    ExtractedMedication(
+                        product_name="",
+                        generic_name="",
+                        strength="",
+                        dosage_form="tablet",
+                        permit_number="",
+                        nhi_code="",
+                        manufacturer="",
+                        directions=MedicationDirections(
+                            dose="",
+                            frequency="",
+                            route="",
+                            duration="",
+                            quantity="",
+                            instructions=[],
+                        ),
+                        source_text=[],
+                        confidence="medium",
+                        evidence=VisualEvidence(
+                            dosage_form="tablet",
+                            colors=["white"],
+                            shape="round",
+                            score_marks=[],
+                            symbols_or_logos=[],
+                            imprints=[],
+                            package_text=[],
+                            distinctive_features=[],
+                        ),
+                    )
+                ],
+                unresolved_text=[],
+                uncertainty_reasons=["No readable imprint."],
+                next_actions=["Photograph both sides of the pill."],
             ),
-            evidence=VisualEvidence(
-                dosage_form="tablet",
-                colors=["white"],
-                shape="round",
-                score_marks=[],
-                symbols_or_logos=[],
-                imprints=[],
-                package_text=[],
-                distinctive_features=[],
-            ),
-            candidate_hypotheses=[],
-            uncertainty_reasons=["Authoritative catalog verification has not run."],
-            next_actions=["Verify the visible evidence against the market catalog."],
+            usage=ModelUsage.empty(),
         )
 
 

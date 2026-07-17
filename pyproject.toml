@@ -11,6 +11,7 @@ dependencies = [
     "aiolimiter>=1.2.1",
     "aiosqlite>=0.22.1",
     "fastapi>=0.139.1",
+    "httpx>=0.28.1",
     "loguru>=0.7.3",
     "openai>=2.45.0",
     "pillow>=12.3.0",
@@ -23,6 +24,8 @@ dependencies = [
 pillscan-server = "pillscan_server.cli:main"
 pillscan-bootstrap = "pillscan_server.bootstrap:main"
 pillscan-catalog-sync = "pillscan_server.catalog_sync:main"
+pillscan-eval = "pillscan_server.eval:main"
+pillscan-setup = "pillscan_server.setup:main"
 
 [build-system]
 requires = ["uv_build>=0.11.24,<0.12.0"]
@@ -50,15 +53,21 @@ pillscan-server = { path = ".", editable = true }
 default = { features = ["dev"], solve-group = "default" }
 
 [tool.pixi.tasks]
-catalog-sync = "pillscan-catalog-sync"
-serve = { cmd = "pillscan-server", depends-on = ["catalog-sync"] }
-dev = "uvicorn pillscan_server.main:app --host 0.0.0.0 --port 8000 --reload"
-test = "pytest"
-lint = "ruff check ."
-format = "ruff format ."
-format-check = "ruff format --check ."
-typecheck = "mypy src tests"
-check = { depends-on = ["format-check", "lint", "typecheck", "test"] }
+setup = { cmd = "pillscan-setup", description = "Create local config, fetch official data, build SQLite, and verify readiness" }
+doctor = { cmd = "pillscan-setup --check-only", description = "Verify credentials and catalog health without exposing secrets" }
+data-sync = { cmd = "pillscan-catalog-sync", description = "Fetch missing TFDA/NHIA data and build the catalog when absent" }
+data-refresh = { cmd = "pillscan-catalog-sync --force", description = "Redownload official data and atomically rebuild the catalog" }
+data-rebuild = { cmd = "pillscan-catalog-sync --force --skip-download", description = "Rebuild SQLite from the cached raw datasets" }
+catalog-sync = { cmd = "pillscan-catalog-sync", description = "Backward-compatible alias for data-sync" }
+serve = { cmd = "pillscan-server", depends-on = ["setup"], description = "Prepare everything and start the production-style server" }
+dev = { cmd = "uvicorn pillscan_server.main:app --host 0.0.0.0 --port 8000 --reload", depends-on = ["setup"], description = "Prepare everything and start the reload server" }
+test = { cmd = "pytest", description = "Run the unit test suite with coverage" }
+lint = { cmd = "ruff check .", description = "Run Ruff lint checks" }
+format = { cmd = "ruff format .", description = "Format Python files" }
+format-check = { cmd = "ruff format --check .", description = "Check Python formatting" }
+typecheck = { cmd = "mypy src tests", description = "Run strict static type checking" }
+eval = { cmd = "pillscan-eval", description = "Run a paced, resumable API benchmark" }
+check = { depends-on = ["format-check", "lint", "typecheck", "test"], description = "Run every local quality gate" }
 
 [tool.pytest.ini_options]
 addopts = "--strict-config --strict-markers --cov=pillscan_server --cov-report=term-missing"
